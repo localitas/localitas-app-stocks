@@ -1,0 +1,1 @@
+ALTER TABLE holdings ADD COLUMN sort_position INTEGER DEFAULT 0;

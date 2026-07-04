@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -85,7 +86,7 @@ func serveAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return fmt.Errorf("install: %w", err)
 	}
-	log.Printf("Stocks database ready: %s", dbID)
+	slog.Info("stocks database ready", "db_id", dbID)
 
 	if err := a.InitStore(coreURL, dbID, token); err != nil {
 		return fmt.Errorf("init store: %w", err)
@@ -105,19 +106,19 @@ func serveAction(ctx context.Context, cmd *cli.Command) error {
 
 	selfURL := fmt.Sprintf("http://localhost:%d", addr.Port)
 	if err := c.RegisterService(ctx, "stocks", selfURL); err != nil {
-		log.Printf("service registry failed: %v", err)
+		slog.Warn("service registry failed", "error", err)
 	}
 
 	shutdown, err := stocks.BroadcastMDNS(addr.Port, stocks.DefaultHealth.Name)
 	if err != nil {
-		log.Printf("mDNS broadcast failed: %v", err)
+		slog.Warn("mDNS broadcast failed", "error", err)
 	}
 
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
-		log.Println("shutting down...")
+		slog.Info("shutting down")
 		if shutdown != nil {
 			shutdown()
 		}
@@ -139,7 +140,7 @@ func migrateCommand() *cli.Command {
 			if err != nil {
 				return fmt.Errorf("migrate: %w", err)
 			}
-			log.Printf("Stocks migrations complete (database: %s)", dbID)
+			slog.Info("stocks migrations complete", "db_id", dbID)
 			return nil
 		},
 	}

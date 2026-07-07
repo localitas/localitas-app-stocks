@@ -1,0 +1,152 @@
+{{define "chart_widget"}}<style>
+.stk-container { font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+.stk-header { display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem; flex-wrap:wrap; }
+.stk-title { font-size:0.875rem; font-weight:600; color:var(--color-text-primary); }
+.stk-range { font-size:0.75rem; color:var(--color-text-secondary); }
+.stk-toggles { display:flex; gap:0.25rem; flex-wrap:wrap; }
+.stk-toggle { padding:0.25rem 0.5rem; border:1px solid var(--color-glass-border); border-radius:0.25rem; background:transparent; color:var(--color-text-secondary); cursor:pointer; font-size:0.6875rem; text-transform:uppercase; }
+.stk-toggle.active { background:var(--color-glass-border); color:var(--color-text-primary); }
+.stk-view-toggles { display:flex; gap:0.25rem; margin-left:auto; }
+.stk-chart-container { width:100%; height:300px; }
+.stk-table { width:100%; border-collapse:collapse; font-size:0.75rem; margin-top:0.5rem; }
+.stk-table th { text-align:left; padding:0.375rem 0.5rem; border-bottom:1px solid var(--color-glass-border); color:var(--color-text-secondary); font-weight:500; text-transform:uppercase; font-size:0.625rem; letter-spacing:0.05em; }
+.stk-table td { padding:0.375rem 0.5rem; border-bottom:1px solid var(--color-glass-border); color:var(--color-text-primary); }
+.stk-table tr:hover { background:var(--color-glass-border); }
+.stk-hidden { display:none; }
+</style>
+
+<div class="stk-container">
+  <div class="stk-header">
+    <span class="stk-title">{{.Title}}</span>
+    <span class="stk-range">{{.Range}}</span>
+    <div class="stk-toggles">
+      <button class="stk-toggle active" onclick="stkToggleSeries('close')">Close</button>
+      <button class="stk-toggle" onclick="stkToggleSeries('open')">Open</button>
+      <button class="stk-toggle" onclick="stkToggleSeries('high')">High</button>
+      <button class="stk-toggle" onclick="stkToggleSeries('low')">Low</button>
+    </div>
+    <div class="stk-view-toggles">
+      <button class="stk-toggle active" onclick="stkSetView('chart')">Chart</button>
+      <button class="stk-toggle" onclick="stkSetView('table')">Table</button>
+    </div>
+  </div>
+
+  <div id="stk-chart-{{.UID}}" class="stk-chart-container"></div>
+
+  <div id="stk-table-{{.UID}}" class="stk-hidden">
+    <table class="stk-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          {{if .MultiTicker}}<th>Ticker</th>{{end}}
+          <th>Open</th>
+          <th>High</th>
+          <th>Low</th>
+          <th>Close</th>
+          <th>Volume</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .TableRows}}<tr>
+          <td>{{.Date}}</td>
+          {{if $.MultiTicker}}<td>{{.Symbol}}</td>{{end}}
+          <td>{{.Open}}</td>
+          <td>{{.High}}</td>
+          <td>{{.Low}}</td>
+          <td>{{.Close}}</td>
+          <td>{{.Volume}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+var stkUID = '{{.UID}}';
+var stkData = {{.ChartDataJSON}};
+var stkSymbols = {{.SymbolsJSON}};
+var stkActiveSeries = {close: true, open: false, high: false, low: false};
+var stkChart = null;
+
+function stkLoadECharts(cb) {
+  if (window.echarts) { cb(); return; }
+  var s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js';
+  s.onload = cb;
+  document.head.appendChild(s);
+}
+
+function stkRenderChart() {
+  var container = document.getElementById('stk-chart-' + stkUID);
+  if (!container) return;
+  if (!stkChart) stkChart = echarts.init(container);
+
+  var series = [];
+  var fields = ['close', 'open', 'high', 'low'];
+  var colors = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899'];
+
+  for (var si = 0; si < stkSymbols.length; si++) {
+    var sym = stkSymbols[si];
+    var points = stkData[sym] || [];
+    for (var fi = 0; fi < fields.length; fi++) {
+      var field = fields[fi];
+      if (!stkActiveSeries[field]) continue;
+      var data = points.map(function(p) { return [p.timestamp * 1000, p[field]]; });
+      var label = stkSymbols.length > 1 ? sym + ' ' + field : field;
+      series.push({
+        name: label,
+        type: 'line',
+        data: data,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1.5 },
+        itemStyle: { color: colors[(si * fields.length + fi) % colors.length] }
+      });
+    }
+  }
+
+  stkChart.setOption({
+    tooltip: { trigger: 'axis', formatter: function(params) {
+      var d = new Date(params[0].value[0]);
+      var s = d.toLocaleDateString() + '<br/>';
+      params.forEach(function(p) { s += p.marker + p.seriesName + ': ' + p.value[1].toFixed(2) + '<br/>'; });
+      return s;
+    }},
+    legend: { show: series.length > 1, textStyle: { color: '#888', fontSize: 10 }, bottom: 0 },
+    grid: { top: 10, right: 10, bottom: series.length > 1 ? 30 : 10, left: 50 },
+    xAxis: { type: 'time', axisLabel: { color: '#888', fontSize: 10 }, axisLine: { lineStyle: { color: '#333' } } },
+    yAxis: { type: 'value', axisLabel: { color: '#888', fontSize: 10 }, splitLine: { lineStyle: { color: '#222' } }, axisLine: { lineStyle: { color: '#333' } } },
+    series: series
+  }, true);
+}
+
+function stkToggleSeries(field) {
+  stkActiveSeries[field] = !stkActiveSeries[field];
+  var btns = document.querySelectorAll('.stk-toggles .stk-toggle');
+  btns.forEach(function(b) {
+    var f = b.textContent.toLowerCase();
+    if (stkActiveSeries[f]) b.classList.add('active');
+    else b.classList.remove('active');
+  });
+  stkRenderChart();
+}
+
+function stkSetView(view) {
+  var chart = document.getElementById('stk-chart-' + stkUID);
+  var table = document.getElementById('stk-table-' + stkUID);
+  var btns = document.querySelectorAll('.stk-view-toggles .stk-toggle');
+  if (view === 'chart') {
+    chart.classList.remove('stk-hidden');
+    table.classList.add('stk-hidden');
+    btns[0].classList.add('active'); btns[1].classList.remove('active');
+    if (stkChart) stkChart.resize();
+  } else {
+    chart.classList.add('stk-hidden');
+    table.classList.remove('stk-hidden');
+    btns[0].classList.remove('active'); btns[1].classList.add('active');
+  }
+}
+
+stkLoadECharts(function() { stkRenderChart(); });
+</script>{{end}}

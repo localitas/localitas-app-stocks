@@ -167,16 +167,43 @@ func (h *handler) handleQuote(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) handleChart(w http.ResponseWriter, r *http.Request) {
-	symbol := r.URL.Query().Get("symbol")
+	symbolStr := r.URL.Query().Get("symbol")
 	rangeStr := r.URL.Query().Get("range")
-	if symbol == "" {
+	if symbolStr == "" {
 		writeErr(w, r, http.StatusBadRequest, "symbol is required")
 		return
 	}
 	if rangeStr == "" {
-		rangeStr = "1d"
+		rangeStr = "1mo"
 	}
 
+	symbols := strings.Split(symbolStr, ",")
+	for i := range symbols {
+		symbols[i] = strings.TrimSpace(strings.ToUpper(symbols[i]))
+	}
+
+	allData := make(map[string][]ChartPoint)
+	for _, symbol := range symbols {
+		points := h.fetchChartData(r, symbol, rangeStr)
+		if len(points) > 0 {
+			allData[symbol] = points
+		}
+	}
+
+	if strings.EqualFold(r.Header.Get("Caller"), "llm") {
+		w.Header().Set("Content-Type", "text/markdown")
+		w.Write([]byte(renderChartWidget(symbols, allData, rangeStr)))
+		return
+	}
+
+	if len(symbols) == 1 {
+		writeJSON(w, r, http.StatusOK, allData[symbols[0]])
+	} else {
+		writeJSON(w, r, http.StatusOK, allData)
+	}
+}
+
+func (h *handler) fetchChartData(r *http.Request, symbol, rangeStr string) []ChartPoint {
 	cacheInterval := "1d"
 	switch rangeStr {
 	case "1d":
@@ -192,11 +219,9 @@ func (h *handler) handleChart(w http.ResponseWriter, r *http.Request) {
 	if rangeStr == "1d" || rangeStr == "5d" || rangeStr == "ytd" {
 		points, err := FetchChart(symbol, rangeStr, r.URL.Query().Get("interval"))
 		if err != nil {
-			writeErr(w, r, http.StatusInternalServerError, "%v", err)
-			return
+			return nil
 		}
-		writeJSON(w, r, http.StatusOK, points)
-		return
+		return points
 	}
 
 	cached, _ := h.app.Store.GetCachedChart(r.Context(), symbol, cacheInterval)
@@ -204,28 +229,22 @@ func (h *handler) handleChart(w http.ResponseWriter, r *http.Request) {
 	if len(cached) == 0 {
 		points, err := FetchChart(symbol, rangeStr, r.URL.Query().Get("interval"))
 		if err != nil {
-			writeErr(w, r, http.StatusInternalServerError, "%v", err)
-			return
+			return nil
 		}
 		h.app.Store.SaveChartPoints(r.Context(), symbol, cacheInterval, points)
-		writeJSON(w, r, http.StatusOK, points)
-		return
+		return points
 	}
 
 	lastTS := h.app.Store.GetLastCachedTimestamp(r.Context(), symbol, cacheInterval)
 	fresh, _ := FetchChart(symbol, "5d", cacheInterval)
-	var newPoints []ChartPoint
 	for _, p := range fresh {
 		if p.Timestamp > lastTS {
-			newPoints = append(newPoints, p)
+			cached = append(cached, p)
+			h.app.Store.SaveChartPoints(r.Context(), symbol, cacheInterval, []ChartPoint{p})
 		}
 	}
-	if len(newPoints) > 0 {
-		h.app.Store.SaveChartPoints(r.Context(), symbol, cacheInterval, newPoints)
-		cached = append(cached, newPoints...)
-	}
 
-	writeJSON(w, r, http.StatusOK, cached)
+	return cached
 }
 
 func (h *handler) handleETFHoldings(w http.ResponseWriter, r *http.Request) {

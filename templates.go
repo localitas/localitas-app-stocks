@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-//go:embed templates/*
+//go:embed templates/*.html templates/partials/*.html
 var TemplatesFS embed.FS
 
 //go:embed docs/help.md

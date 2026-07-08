@@ -56,6 +56,7 @@ var StocksAPIDoc = APIDoc{
 		{Method: "PUT", Path: "/api/holdings/{id}", Summary: "Update allocation %", RequestBody: &APIBody{ContentType: "application/json", Example: `{"allocation_pct":25.0}`}},
 		{Method: "DELETE", Path: "/api/holdings/{id}", Summary: "Remove holding"},
 		{Method: "POST", Path: "/api/simulate", Summary: "Run portfolio simulation", RequestBody: &APIBody{ContentType: "application/json", Example: `{"portfolio_id":"abc","amount":10000,"range":"1y","allocations":{"AAPL":50,"MSFT":50}}`}},
+		{Method: "POST", Path: "/api/refresh", Summary: "Refresh stock quotes", RequestBody: &APIBody{ContentType: "application/json", Example: `{"portfolio_id":"abc"}`}, Response: &APIBody{ContentType: "application/json", Example: `{"refreshed":3,"symbols":["AAPL","MSFT","GOOG"],"quotes":[...]}`}},
 	},
 }
 

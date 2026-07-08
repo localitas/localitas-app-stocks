@@ -100,6 +100,12 @@ type FinancialStatement struct {
 	EpsSurprisePct  float64 `json:"eps_surprise_pct,omitempty"`
 }
 
+type RefreshResponse struct {
+	Refreshed int      `json:"refreshed"`
+	Symbols   []string `json:"symbols,omitempty"`
+	Quotes    []Quote  `json:"quotes,omitempty"`
+}
+
 type SimulationResult struct {
 	TotalInvested float64             `json:"total_invested"`
 	TotalValue    float64             `json:"total_value"`

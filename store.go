@@ -58,6 +58,26 @@ func (s *Store) ListPortfolios(ctx context.Context, userID string) ([]*Portfolio
 	return out, nil
 }
 
+func (s *Store) ListAllPortfolios(ctx context.Context) ([]*Portfolio, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT id, name, sort_order, created_at, updated_at FROM portfolios ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]*Portfolio, 0)
+	for rows.Next() {
+		var p Portfolio
+		var createdAt, updatedAt int64
+		if err := rows.Scan(&p.ID, &p.Name, &p.SortOrder, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		p.CreatedAt = time.Unix(createdAt, 0)
+		p.UpdatedAt = time.Unix(updatedAt, 0)
+		out = append(out, &p)
+	}
+	return out, nil
+}
+
 func (s *Store) UpdatePortfolio(ctx context.Context, id, name string) error {
 	now := time.Now().UTC().Unix()
 	_, err := s.db.ExecContext(ctx, "UPDATE portfolios SET name=?, updated_at=? WHERE id=?", name, now, id)

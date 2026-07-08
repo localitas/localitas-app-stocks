@@ -86,4 +86,5 @@ func (a *App) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/analyst-targets", h.handleAnalystTargets)
 	mux.HandleFunc("POST /api/simulate", h.handleSimulate)
 	mux.HandleFunc("GET /api/search", h.handleSearch)
+	mux.HandleFunc("POST /api/refresh", h.handleRefresh)
 }

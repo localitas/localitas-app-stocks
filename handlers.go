@@ -418,6 +418,68 @@ func (h *handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, results)
 }
 
+func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PortfolioID string   `json:"portfolio_id"`
+		Symbols     []string `json:"symbols"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
+	symbolSet := make(map[string]bool)
+
+	if len(req.Symbols) > 0 {
+		for _, s := range req.Symbols {
+			symbolSet[strings.ToUpper(strings.TrimSpace(s))] = true
+		}
+	} else if req.PortfolioID != "" {
+		holdings, err := h.app.Store.ListHoldings(r.Context(), req.PortfolioID)
+		if err != nil {
+			writeErr(w, r, http.StatusInternalServerError, "list holdings: %v", err)
+			return
+		}
+		for _, hold := range holdings {
+			symbolSet[hold.Symbol] = true
+		}
+	} else {
+		portfolios, err := h.app.Store.ListAllPortfolios(r.Context())
+		if err != nil {
+			writeErr(w, r, http.StatusInternalServerError, "list portfolios: %v", err)
+			return
+		}
+		for _, p := range portfolios {
+			holdings, err := h.app.Store.ListHoldings(r.Context(), p.ID)
+			if err != nil {
+				continue
+			}
+			for _, hold := range holdings {
+				symbolSet[hold.Symbol] = true
+			}
+		}
+	}
+
+	symbols := make([]string, 0, len(symbolSet))
+	for s := range symbolSet {
+		symbols = append(symbols, s)
+	}
+
+	if len(symbols) == 0 {
+		writeJSON(w, r, http.StatusOK, RefreshResponse{Refreshed: 0})
+		return
+	}
+
+	quotes, err := FetchQuotes(symbols)
+	if err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "fetch quotes: %v", err)
+		return
+	}
+
+	writeJSON(w, r, http.StatusOK, RefreshResponse{
+		Refreshed: len(quotes),
+		Symbols:   symbols,
+		Quotes:    quotes,
+	})
+}
+
 func writeJSON(w http.ResponseWriter, r *http.Request, status int, v interface{}) {
 	httputil.WriteResponse(w, r, status, v)
 }

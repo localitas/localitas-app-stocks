@@ -369,6 +369,14 @@ func (h *handler) handleSimulate(w http.ResponseWriter, r *http.Request) {
 		{"3 Years", 3},
 		{"5 Years", 5},
 		{"10 Years", 10},
+		{"15 Years", 15},
+		{"20 Years", 20},
+		{"25 Years", 25},
+		{"30 Years", 30},
+		{"35 Years", 35},
+		{"40 Years", 40},
+		{"45 Years", 45},
+		{"50 Years", 50},
 	}
 
 	portfolioAnnualized := weightedReturn / totalWeight

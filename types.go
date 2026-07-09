@@ -107,21 +107,25 @@ type RefreshResponse struct {
 }
 
 type SimulationResult struct {
-	TotalInvested float64             `json:"total_invested"`
-	TotalValue    float64             `json:"total_value"`
-	TotalGain     float64             `json:"total_gain"`
-	TotalGainPct  float64             `json:"total_gain_pct"`
-	Holdings      []SimulationHolding `json:"holdings"`
+	TotalInvested    float64              `json:"total_invested"`
+	Window           string               `json:"window"`
+	AnnualizedReturn float64              `json:"annualized_return"`
+	Holdings         []SimulationHolding  `json:"holdings"`
+	Projections      []ProjectionSnapshot `json:"projections"`
 }
 
 type SimulationHolding struct {
-	Symbol        string  `json:"symbol"`
-	AllocationPct float64 `json:"allocation_pct"`
-	Invested      float64 `json:"invested"`
-	StartPrice    float64 `json:"start_price"`
-	EndPrice      float64 `json:"end_price"`
-	Shares        float64 `json:"shares"`
-	Value         float64 `json:"value"`
-	Gain          float64 `json:"gain"`
-	GainPct       float64 `json:"gain_pct"`
+	Symbol           string  `json:"symbol"`
+	AllocationPct    float64 `json:"allocation_pct"`
+	Invested         float64 `json:"invested"`
+	AnnualizedReturn float64 `json:"annualized_return"`
+	CurrentPrice     float64 `json:"current_price"`
+}
+
+type ProjectionSnapshot struct {
+	Label          string  `json:"label"`
+	Years          float64 `json:"years"`
+	ProjectedValue float64 `json:"projected_value"`
+	ProjectedGain  float64 `json:"projected_gain"`
+	ProjectedPct   float64 `json:"projected_pct"`
 }

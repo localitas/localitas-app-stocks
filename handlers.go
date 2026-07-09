@@ -2,6 +2,7 @@ package stocks
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -123,13 +124,17 @@ func (h *handler) handleAddHolding(w http.ResponseWriter, r *http.Request) {
 func (h *handler) handleUpdateHolding(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
-		AllocationPct float64 `json:"allocation_pct"`
+		AllocationPct *float64 `json:"allocation_pct"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "invalid body")
 		return
 	}
-	h.app.Store.UpdateHolding(r.Context(), id, req.AllocationPct)
+	if req.AllocationPct == nil {
+		writeErr(w, r, http.StatusBadRequest, "allocation_pct is required")
+		return
+	}
+	h.app.Store.UpdateHolding(r.Context(), id, *req.AllocationPct)
 	writeJSON(w, r, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -292,7 +297,7 @@ func (h *handler) handleSimulate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PortfolioID string             `json:"portfolio_id"`
 		Amount      float64            `json:"amount"`
-		Range       string             `json:"range"`
+		Window      string             `json:"window"`
 		Allocations map[string]float64 `json:"allocations"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -303,51 +308,126 @@ func (h *handler) handleSimulate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "amount and allocations are required")
 		return
 	}
-	if req.Range == "" {
-		req.Range = "1y"
+	if req.Window == "" {
+		req.Window = "1y"
 	}
 
-	result := SimulationResult{TotalInvested: req.Amount}
+	windowYears := windowToYears(req.Window)
+
+	result := SimulationResult{
+		TotalInvested: req.Amount,
+		Window:        req.Window,
+	}
+
+	var weightedReturn float64
+	var totalWeight float64
+
+	yahooRange := windowToYahooRange(req.Window)
+	windowDays := int(windowYears * 365)
 
 	for symbol, pct := range req.Allocations {
 		invested := req.Amount * (pct / 100)
-		points, err := FetchChart(symbol, req.Range, "")
+		points, err := FetchChart(symbol, yahooRange, "")
 		if err != nil || len(points) == 0 {
 			continue
+		}
+		if len(points) > windowDays && windowDays > 0 {
+			points = points[len(points)-windowDays:]
 		}
 		startPrice := points[0].Close
 		endPrice := points[len(points)-1].Close
 		if startPrice <= 0 {
 			continue
 		}
-		shares := invested / startPrice
-		value := shares * endPrice
-		gain := value - invested
-		gainPct := 0.0
-		if invested > 0 {
-			gainPct = (gain / invested) * 100
-		}
+
+		totalReturn := (endPrice - startPrice) / startPrice
+		annualized := annualizeReturn(totalReturn, windowYears)
+
 		sh := SimulationHolding{
-			Symbol:        symbol,
-			AllocationPct: pct,
-			Invested:      invested,
-			StartPrice:    startPrice,
-			EndPrice:      endPrice,
-			Shares:        shares,
-			Value:         value,
-			Gain:          gain,
-			GainPct:       gainPct,
+			Symbol:           symbol,
+			AllocationPct:    pct,
+			Invested:         invested,
+			AnnualizedReturn: annualized * 100,
+			CurrentPrice:     endPrice,
 		}
 		result.Holdings = append(result.Holdings, sh)
-		result.TotalValue += value
+
+		weightedReturn += annualized * (pct / 100)
+		totalWeight += pct / 100
 	}
 
-	result.TotalGain = result.TotalValue - result.TotalInvested
-	if result.TotalInvested > 0 {
-		result.TotalGainPct = (result.TotalGain / result.TotalInvested) * 100
+	if totalWeight > 0 {
+		result.AnnualizedReturn = (weightedReturn / totalWeight) * 100
+	}
+
+	projectionLabels := []struct {
+		Label string
+		Years float64
+	}{
+		{"1 Year", 1},
+		{"2 Years", 2},
+		{"3 Years", 3},
+		{"5 Years", 5},
+		{"10 Years", 10},
+	}
+
+	portfolioAnnualized := weightedReturn / totalWeight
+	for _, p := range projectionLabels {
+		projected := req.Amount * math.Pow(1+portfolioAnnualized, p.Years)
+		gain := projected - req.Amount
+		gainPct := 0.0
+		if req.Amount > 0 {
+			gainPct = (gain / req.Amount) * 100
+		}
+		result.Projections = append(result.Projections, ProjectionSnapshot{
+			Label:          p.Label,
+			Years:          p.Years,
+			ProjectedValue: projected,
+			ProjectedGain:  gain,
+			ProjectedPct:   gainPct,
+		})
 	}
 
 	writeJSON(w, r, http.StatusOK, result)
+}
+
+func windowToYears(window string) float64 {
+	switch window {
+	case "200d":
+		return 200.0 / 365.0
+	case "3mo":
+		return 0.25
+	case "6mo":
+		return 0.5
+	case "1y":
+		return 1.0
+	case "2y":
+		return 2.0
+	case "3y":
+		return 3.0
+	case "5y":
+		return 5.0
+	default:
+		return 1.0
+	}
+}
+
+func windowToYahooRange(window string) string {
+	switch window {
+	case "200d":
+		return "1y"
+	case "3y":
+		return "5y"
+	default:
+		return window
+	}
+}
+
+func annualizeReturn(totalReturn, years float64) float64 {
+	if years <= 0 || totalReturn <= -1 {
+		return 0
+	}
+	return math.Pow(1+totalReturn, 1/years) - 1
 }
 
 func (h *handler) handleFinancials(w http.ResponseWriter, r *http.Request) {

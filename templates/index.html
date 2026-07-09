@@ -275,7 +275,8 @@
                     return;
                 }
 
-                var equalPct = Math.floor(100 / _portfolioHoldings.length * 100) / 100;
+                var allZero = _portfolioHoldings.every(function(h) { return !h.allocation_pct; });
+                var equalPct = allZero ? Math.floor(100 / _portfolioHoldings.length * 100) / 100 : 0;
 
                 var html = '<div class="stock-header">' +
                     '<div class="stock-name">' + _portfolioHoldings.length + ' holdings</div>' +
@@ -287,7 +288,7 @@
                 _portfolioHoldings.forEach(function(h) {
                     var chgClass = h.quote && h.quote.change >= 0 ? 'gain' : 'loss';
                     var chgSign = h.quote && h.quote.change >= 0 ? '+' : '';
-                    var pct = h.allocation_pct || equalPct;
+                    var pct = allZero ? equalPct : (h.allocation_pct || 0);
                     html += '<tr style="cursor:pointer;" onclick="viewStock(\'' + esc(h.symbol) + '\')">' +
                         '<td><strong>' + esc(h.symbol) + '</strong></td>' +
                         '<td style="color:var(--color-text-secondary);">' + (h.quote ? esc(h.quote.name) : '') + '</td>' +
@@ -306,10 +307,12 @@
                     '<div style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap;">' +
                     '<div><label style="font-size:0.75rem;color:var(--color-text-secondary);display:block;">Amount ($)</label>' +
                     '<input type="number" id="sim-amount" value="10000" step="1000" style="width:120px;"></div>' +
-                    '<div><label style="font-size:0.75rem;color:var(--color-text-secondary);display:block;">Period</label>' +
-                    '<select id="sim-range" style="padding:0.375rem 0.5rem;">' +
-                    '<option value="1mo">1 Month</option><option value="3mo">3 Months</option>' +
-                    '<option value="1y" selected>1 Year</option><option value="5y">5 Years</option><option value="max">Max</option></select></div>' +
+                    '<div><label style="font-size:0.75rem;color:var(--color-text-secondary);display:block;">Sliding Window</label>' +
+                    '<select id="sim-window" style="padding:0.375rem 0.5rem;">' +
+                    '<option value="200d">200 Days</option><option value="3mo">3 Months</option>' +
+                    '<option value="6mo">6 Months</option><option value="1y" selected>1 Year</option>' +
+                    '<option value="2y">2 Years</option><option value="3y">3 Years</option>' +
+                    '<option value="5y">5 Years</option></select></div>' +
                     '<button class="btn btn-primary" onclick="runSimulation(\'' + portfolioID + '\')">Simulate</button>' +
                     '<button class="btn" onclick="equalWeight()">Equal Weight</button>' +
                     '</div>' +
@@ -358,7 +361,7 @@
 
         async function runSimulation(portfolioID) {
             var amount = parseFloat(document.getElementById('sim-amount').value) || 10000;
-            var range = document.getElementById('sim-range').value;
+            var window = document.getElementById('sim-window').value;
 
             var allocations = {};
             var inputs = document.querySelectorAll('.holdings-table input[type=number]');
@@ -376,30 +379,41 @@
             document.getElementById('sim-results').innerHTML = '<div style="color:var(--color-text-secondary);">Simulating...</div>';
 
             try {
-                var resp = await fetch('api/simulate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({portfolio_id:portfolioID, amount:amount, range:range, allocations:allocations})});
+                var resp = await fetch('api/simulate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({portfolio_id:portfolioID, amount:amount, window:window, allocations:allocations})});
                 var result = await resp.json();
                 if (result.error) { document.getElementById('sim-results').innerHTML = '<div style="color:var(--color-red);">' + esc(result.error) + '</div>'; return; }
 
-                var gainClass = result.total_gain >= 0 ? 'gain' : 'loss';
-                var gainSign = result.total_gain >= 0 ? '+' : '';
+                var retClass = result.annualized_return >= 0 ? 'gain' : 'loss';
+                var retSign = result.annualized_return >= 0 ? '+' : '';
 
-                var html = '<div style="margin-bottom:0.75rem;">' +
-                    '<span style="font-size:1.25rem;font-weight:700;">' + fmtPrice(result.total_value) + '</span> ' +
-                    '<span class="' + gainClass + '" style="font-size:1rem;">' + gainSign + fmtPrice(result.total_gain).replace('$','') + ' (' + gainSign + result.total_gain_pct.toFixed(2) + '%)</span>' +
-                    '<span style="font-size:0.8125rem;color:var(--color-text-secondary);margin-left:0.5rem;">from ' + fmtPrice(result.total_invested) + '</span></div>';
+                var html = '<div style="margin-bottom:1rem;">' +
+                    '<span style="font-size:0.8125rem;color:var(--color-text-secondary);">Portfolio annualized return (' + esc(result.window) + ' window): </span>' +
+                    '<span class="' + retClass + '" style="font-size:1.125rem;font-weight:700;">' + retSign + result.annualized_return.toFixed(2) + '%</span></div>';
 
-                html += '<table class="holdings-table"><thead><tr><th>Symbol</th><th>Alloc</th><th>Invested</th><th>Start</th><th>End</th><th>Value</th><th>Return</th></tr></thead><tbody>';
+                html += '<div style="font-size:0.75rem;font-weight:600;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">Per-holding annualized return</div>';
+                html += '<table class="holdings-table"><thead><tr><th>Symbol</th><th>Alloc</th><th>Invested</th><th>Price</th><th>Ann. Return</th></tr></thead><tbody>';
                 (result.holdings || []).forEach(function(h) {
-                    var cls = h.gain >= 0 ? 'gain' : 'loss';
-                    var s = h.gain >= 0 ? '+' : '';
+                    var cls = h.annualized_return >= 0 ? 'gain' : 'loss';
+                    var s = h.annualized_return >= 0 ? '+' : '';
                     html += '<tr>' +
                         '<td><strong>' + esc(h.symbol) + '</strong></td>' +
                         '<td>' + h.allocation_pct.toFixed(1) + '%</td>' +
                         '<td>' + fmtPrice(h.invested) + '</td>' +
-                        '<td>' + fmtPrice(h.start_price) + '</td>' +
-                        '<td>' + fmtPrice(h.end_price) + '</td>' +
-                        '<td>' + fmtPrice(h.value) + '</td>' +
-                        '<td class="' + cls + '">' + s + h.gain_pct.toFixed(2) + '%</td></tr>';
+                        '<td>' + fmtPrice(h.current_price) + '</td>' +
+                        '<td class="' + cls + '">' + s + h.annualized_return.toFixed(2) + '%</td></tr>';
+                });
+                html += '</tbody></table>';
+
+                html += '<div style="font-size:0.75rem;font-weight:600;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin:1rem 0 0.5rem;">Projected future value</div>';
+                html += '<table class="holdings-table"><thead><tr><th>Horizon</th><th>Projected Value</th><th>Gain</th><th>Return</th></tr></thead><tbody>';
+                (result.projections || []).forEach(function(p) {
+                    var cls = p.projected_gain >= 0 ? 'gain' : 'loss';
+                    var s = p.projected_gain >= 0 ? '+' : '';
+                    html += '<tr>' +
+                        '<td>' + esc(p.label) + '</td>' +
+                        '<td style="font-weight:600;">' + fmtPrice(p.projected_value) + '</td>' +
+                        '<td class="' + cls + '">' + s + fmtPrice(p.projected_gain).replace('$','') + '</td>' +
+                        '<td class="' + cls + '">' + s + p.projected_pct.toFixed(1) + '%</td></tr>';
                 });
                 html += '</tbody></table>';
 

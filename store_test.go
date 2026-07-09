@@ -18,33 +18,36 @@ func TestNewID(t *testing.T) {
 	}
 }
 
-func TestSimulationHolding_Calculation(t *testing.T) {
-	invested := 1000.0
-	startPrice := 100.0
-	endPrice := 150.0
-	shares := invested / startPrice
-	value := shares * endPrice
-	gain := value - invested
-	gainPct := (gain / invested) * 100
-
+func TestSimulationHolding_Fields(t *testing.T) {
 	sh := SimulationHolding{
-		Symbol:     "TEST",
-		Invested:   invested,
-		StartPrice: startPrice,
-		EndPrice:   endPrice,
-		Shares:     shares,
-		Value:      value,
-		Gain:       gain,
-		GainPct:    gainPct,
+		Symbol:           "TEST",
+		AllocationPct:    50.0,
+		Invested:         1000.0,
+		AnnualizedReturn: 15.5,
+		CurrentPrice:     150.0,
 	}
 
-	if sh.Value != 1500 {
-		t.Errorf("Value = %f, want 1500", sh.Value)
+	if sh.Invested != 1000 {
+		t.Errorf("Invested = %f, want 1000", sh.Invested)
 	}
-	if sh.Gain != 500 {
-		t.Errorf("Gain = %f, want 500", sh.Gain)
+	if sh.AnnualizedReturn != 15.5 {
+		t.Errorf("AnnualizedReturn = %f, want 15.5", sh.AnnualizedReturn)
 	}
-	if sh.GainPct != 50 {
-		t.Errorf("GainPct = %f, want 50", sh.GainPct)
+}
+
+func TestProjectionSnapshot(t *testing.T) {
+	p := ProjectionSnapshot{
+		Label:          "5 Years",
+		Years:          5,
+		ProjectedValue: 20113.57,
+		ProjectedGain:  10113.57,
+		ProjectedPct:   101.14,
+	}
+
+	if p.Years != 5 {
+		t.Errorf("Years = %f, want 5", p.Years)
+	}
+	if p.ProjectedGain < 0 {
+		t.Error("ProjectedGain should be positive for positive return")
 	}
 }

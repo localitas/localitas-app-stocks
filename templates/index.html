@@ -598,7 +598,7 @@
 
                 var html = '<div class="stock-header">' +
                     '<div class="stock-name">' + esc(q.name) + ' · ' + esc(q.exchange) + '</div>' +
-                    '<div class="stock-price">' + fmtPrice(q.price) + ' <span class="stock-change ' + changeClass + '">' + changeSign + q.change.toFixed(2) + ' (' + changeSign + q.change_percent.toFixed(2) + '%)</span></div>' +
+                    '<div class="stock-price">' + fmtPrice(q.price) + ' <span id="period-change" class="stock-change ' + changeClass + '">' + changeSign + q.change.toFixed(2) + ' (' + changeSign + q.change_percent.toFixed(2) + '%)</span></div>' +
                     extHTML +
                     '<div class="stock-market-state">' + esc(q.market_state || 'REGULAR') + ' · ' + esc(q.currency || 'USD') + '</div>' +
                     '</div>';
@@ -669,6 +669,17 @@
             var container = document.getElementById('stock-chart');
             if (!container) return;
             if (chart) chart.dispose();
+
+            var periodEl = document.getElementById('period-change');
+            if (periodEl && points.length > 1) {
+                var startP = points[0].close;
+                var endP = points[points.length - 1].close;
+                var chg = endP - startP;
+                var chgPct = startP > 0 ? (chg / startP) * 100 : 0;
+                var sign = chg >= 0 ? '+' : '';
+                periodEl.textContent = sign + chg.toFixed(2) + ' (' + sign + chgPct.toFixed(2) + '%)';
+                periodEl.className = 'stock-change ' + (chg >= 0 ? 'gain' : 'loss');
+            }
             chart = echarts.init(container);
 
             var isDark = document.documentElement.getAttribute('data-theme') === 'dark';

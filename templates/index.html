@@ -314,7 +314,6 @@
                     '<option value="2y">2 Years</option><option value="3y">3 Years</option>' +
                     '<option value="5y">5 Years</option></select></div>' +
                     '<button class="btn btn-primary" onclick="runSimulation(\'' + portfolioID + '\')">Simulate</button>' +
-                    '<button class="btn" onclick="equalWeight()">Equal Weight</button>' +
                     '</div>' +
                     '<div id="sim-results" style="margin-top:1rem;"></div></div>';
 
@@ -350,13 +349,6 @@
                 el.textContent = 'Total: ' + total.toFixed(1) + '% · Remaining: ' + remainder.toFixed(1) + '%';
                 el.style.color = remainder < 0 ? 'var(--color-red)' : 'var(--color-text-secondary)';
             }
-        }
-
-        function equalWeight() {
-            var inputs = document.querySelectorAll('.holdings-table input[type=number]');
-            var pct = Math.floor(100 / inputs.length * 100) / 100;
-            inputs.forEach(function(inp) { inp.value = pct.toFixed(1); });
-            inputs.forEach(function(inp) { inp.dispatchEvent(new Event('change')); });
         }
 
         async function runSimulation(portfolioID) {

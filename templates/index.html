@@ -442,13 +442,11 @@
 
             var html = '';
             holdings.forEach(function(h) {
-                var chgClass = h.quote && h.quote.change >= 0 ? 'gain' : 'loss';
-                var chgSign = h.quote && h.quote.change >= 0 ? '+' : '';
                 html += '<div style="margin-bottom:1rem;">' +
                     '<div style="display:flex;align-items:baseline;gap:0.5rem;margin-bottom:0.25rem;">' +
                     '<span style="font-weight:600;">' + esc(h.symbol) + '</span>' +
                     '<span style="font-size:0.875rem;">' + (h.quote ? fmtPrice(h.quote.price) : '--') + '</span>' +
-                    '<span class="' + chgClass + '" style="font-size:0.8125rem;">' + (h.quote ? chgSign + h.quote.change_percent.toFixed(2) + '%' : '') + '</span></div>' +
+                    '<span id="pchart-chg-' + esc(h.symbol) + '" class="gain" style="font-size:0.8125rem;"></span></div>' +
                     '<div id="pchart-' + esc(h.symbol) + '" style="width:100%;height:150px;"></div></div>';
             });
             container.innerHTML = html;
@@ -460,6 +458,13 @@
                     var points = await resp.json();
                     if (points && points.length) {
                         renderMiniChart('pchart-' + h.symbol, points);
+                        var startP = points[0].close, endP = points[points.length-1].close;
+                        var chg = startP > 0 ? ((endP - startP) / startP) * 100 : 0;
+                        var chgEl = document.getElementById('pchart-chg-' + h.symbol);
+                        if (chgEl) {
+                            chgEl.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
+                            chgEl.className = chg >= 0 ? 'gain' : 'loss';
+                        }
                     }
                 } catch(e) {}
             }

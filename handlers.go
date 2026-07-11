@@ -1,6 +1,7 @@
 package stocks
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -506,36 +507,28 @@ func (h *handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, results)
 }
 
-func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		PortfolioID string   `json:"portfolio_id"`
-		Symbols     []string `json:"symbols"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-
+func (h *handler) collectRefreshSymbols(ctx context.Context, portfolioID string, symbols []string) ([]string, error) {
 	symbolSet := make(map[string]bool)
 
-	if len(req.Symbols) > 0 {
-		for _, s := range req.Symbols {
+	if len(symbols) > 0 {
+		for _, s := range symbols {
 			symbolSet[strings.ToUpper(strings.TrimSpace(s))] = true
 		}
-	} else if req.PortfolioID != "" {
-		holdings, err := h.app.Store.ListHoldings(r.Context(), req.PortfolioID)
+	} else if portfolioID != "" {
+		holdings, err := h.app.Store.ListHoldings(ctx, portfolioID)
 		if err != nil {
-			writeErr(w, r, http.StatusInternalServerError, "list holdings: %v", err)
-			return
+			return nil, err
 		}
 		for _, hold := range holdings {
 			symbolSet[hold.Symbol] = true
 		}
 	} else {
-		portfolios, err := h.app.Store.ListAllPortfolios(r.Context())
+		portfolios, err := h.app.Store.ListAllPortfolios(ctx)
 		if err != nil {
-			writeErr(w, r, http.StatusInternalServerError, "list portfolios: %v", err)
-			return
+			return nil, err
 		}
 		for _, p := range portfolios {
-			holdings, err := h.app.Store.ListHoldings(r.Context(), p.ID)
+			holdings, err := h.app.Store.ListHoldings(ctx, p.ID)
 			if err != nil {
 				continue
 			}
@@ -545,9 +538,46 @@ func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	symbols := make([]string, 0, len(symbolSet))
+	result := make([]string, 0, len(symbolSet))
 	for s := range symbolSet {
-		symbols = append(symbols, s)
+		result = append(result, s)
+	}
+	return result, nil
+}
+
+func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PortfolioID string   `json:"portfolio_id"`
+		Symbols     []string `json:"symbols"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
+	work := func(ctx context.Context) (map[string]interface{}, error) {
+		symbols, err := h.collectRefreshSymbols(ctx, req.PortfolioID, req.Symbols)
+		if err != nil {
+			return nil, err
+		}
+		if len(symbols) == 0 {
+			return map[string]interface{}{"refreshed": 0}, nil
+		}
+		quotes, err := FetchQuotes(symbols)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"refreshed": len(quotes),
+			"symbols":   symbols,
+		}, nil
+	}
+
+	if client.RunAsync(w, r, h.app.client, work) {
+		return
+	}
+
+	symbols, err := h.collectRefreshSymbols(r.Context(), req.PortfolioID, req.Symbols)
+	if err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "%v", err)
+		return
 	}
 
 	if len(symbols) == 0 {

@@ -570,7 +570,7 @@ func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		}, nil
 	}
 
-	if client.RunAsync(w, r, h.app.client, work) {
+	if h.app.client.RunAsync(w, r, work) {
 		return
 	}
 

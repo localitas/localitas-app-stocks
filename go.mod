@@ -1,10 +1,11 @@
 module github.com/localitas/localitas-app-stocks
 
-go 1.26.5
+go 1.27.0
 
 require (
 	github.com/grandcat/zeroconf v1.0.0
 	github.com/localitas/localitas-go v0.1.12
+	github.com/mattn/go-sqlite3 v1.14.47
 	github.com/urfave/cli/v3 v3.9.1
 )
 
@@ -13,7 +14,6 @@ replace github.com/localitas/localitas-go => ../localitas-go
 require (
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/mattn/go-sqlite3 v1.14.47 // indirect
 	github.com/miekg/dns v1.1.27 // indirect
 	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/net v0.55.0 // indirect

@@ -3,6 +3,7 @@ package stocks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"strings"
@@ -17,7 +18,7 @@ type handler struct {
 }
 
 func (h *handler) handleListPortfolios(w http.ResponseWriter, r *http.Request) {
-	userID := client.UserIDFromRequest(r)
+	userID := client.GetUserID(r.Context())
 	portfolios, err := h.app.Store.ListPortfolios(r.Context(), userID)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "%v", err)
@@ -38,7 +39,7 @@ func (h *handler) handleCreatePortfolio(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, r, http.StatusBadRequest, "name is required")
 		return
 	}
-	userID := client.UserIDFromRequest(r)
+	userID := client.GetUserID(r.Context())
 	p, err := h.app.Store.CreatePortfolio(r.Context(), userID, req.Name)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "%v", err)
@@ -56,13 +57,19 @@ func (h *handler) handleUpdatePortfolio(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, r, http.StatusBadRequest, "invalid body")
 		return
 	}
-	h.app.Store.UpdatePortfolio(r.Context(), id, req.Name)
+	if err := h.app.Store.UpdatePortfolio(r.Context(), client.GetUserID(r.Context()), id, req.Name); err != nil {
+		writeStoreErr(w, r, err)
+		return
+	}
 	writeJSON(w, r, http.StatusOK, map[string]bool{"success": true})
 }
 
 func (h *handler) handleDeletePortfolio(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	h.app.Store.DeletePortfolio(r.Context(), id)
+	if err := h.app.Store.DeletePortfolio(r.Context(), client.GetUserID(r.Context()), id); err != nil {
+		writeStoreErr(w, r, err)
+		return
+	}
 	writeJSON(w, r, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -72,9 +79,9 @@ func (h *handler) handleListHoldings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "portfolio_id is required")
 		return
 	}
-	holdings, err := h.app.Store.ListHoldings(r.Context(), portfolioID)
+	holdings, err := h.app.Store.ListHoldings(r.Context(), client.GetUserID(r.Context()), portfolioID)
 	if err != nil {
-		writeErr(w, r, http.StatusInternalServerError, "%v", err)
+		writeStoreErr(w, r, err)
 		return
 	}
 
@@ -114,9 +121,9 @@ func (h *handler) handleAddHolding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Symbol = strings.ToUpper(req.Symbol)
-	hold, err := h.app.Store.AddHolding(r.Context(), req.PortfolioID, req.Symbol)
+	hold, err := h.app.Store.AddHolding(r.Context(), client.GetUserID(r.Context()), req.PortfolioID, req.Symbol)
 	if err != nil {
-		writeErr(w, r, http.StatusInternalServerError, "%v", err)
+		writeStoreErr(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusCreated, hold)
@@ -135,7 +142,10 @@ func (h *handler) handleUpdateHolding(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "allocation_pct is required")
 		return
 	}
-	h.app.Store.UpdateHolding(r.Context(), id, *req.AllocationPct)
+	if err := h.app.Store.UpdateHolding(r.Context(), client.GetUserID(r.Context()), id, *req.AllocationPct); err != nil {
+		writeStoreErr(w, r, err)
+		return
+	}
 	writeJSON(w, r, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -148,13 +158,19 @@ func (h *handler) handleReorderHolding(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "invalid body")
 		return
 	}
-	h.app.Store.UpdateSortPosition(r.Context(), id, req.Position)
+	if err := h.app.Store.UpdateSortPosition(r.Context(), client.GetUserID(r.Context()), id, req.Position); err != nil {
+		writeStoreErr(w, r, err)
+		return
+	}
 	writeJSON(w, r, http.StatusOK, map[string]bool{"success": true})
 }
 
 func (h *handler) handleDeleteHolding(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	h.app.Store.DeleteHolding(r.Context(), id)
+	if err := h.app.Store.DeleteHolding(r.Context(), client.GetUserID(r.Context()), id); err != nil {
+		writeStoreErr(w, r, err)
+		return
+	}
 	writeJSON(w, r, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -507,34 +523,45 @@ func (h *handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, results)
 }
 
-func (h *handler) collectRefreshSymbols(ctx context.Context, portfolioID string, symbols []string) ([]string, error) {
+// collectRefreshSymbols picks the symbols to refresh: those named, else a
+// portfolio's (the caller's own), else every portfolio's for core's cron
+// and the caller's own portfolios for a user.
+func (h *handler) collectRefreshSymbols(ctx context.Context, system bool, userID, portfolioID string, symbols []string) ([]string, error) {
 	symbolSet := make(map[string]bool)
 
-	if len(symbols) > 0 {
-		for _, s := range symbols {
-			symbolSet[strings.ToUpper(strings.TrimSpace(s))] = true
-		}
-	} else if portfolioID != "" {
-		holdings, err := h.app.Store.ListHoldings(ctx, portfolioID)
-		if err != nil {
-			return nil, err
-		}
+	addHoldings := func(holdings []*Holding) {
 		for _, hold := range holdings {
 			symbolSet[hold.Symbol] = true
 		}
-	} else {
-		portfolios, err := h.app.Store.ListAllPortfolios(ctx)
+	}
+	switch {
+	case len(symbols) > 0:
+		for _, s := range symbols {
+			symbolSet[strings.ToUpper(strings.TrimSpace(s))] = true
+		}
+	case portfolioID != "" && !system:
+		holdings, err := h.app.Store.ListHoldings(ctx, userID, portfolioID)
+		if err != nil {
+			return nil, err
+		}
+		addHoldings(holdings)
+	default:
+		var portfolios []*Portfolio
+		var err error
+		if system {
+			portfolios, err = h.app.Store.ListAllPortfolios(ctx)
+		} else {
+			portfolios, err = h.app.Store.ListPortfolios(ctx, userID)
+		}
 		if err != nil {
 			return nil, err
 		}
 		for _, p := range portfolios {
-			holdings, err := h.app.Store.ListHoldings(ctx, p.ID)
+			holdings, err := h.app.Store.listPortfolioHoldings(ctx, p.ID)
 			if err != nil {
-				continue
+				return nil, err
 			}
-			for _, hold := range holdings {
-				symbolSet[hold.Symbol] = true
-			}
+			addHoldings(holdings)
 		}
 	}
 
@@ -546,6 +573,8 @@ func (h *handler) collectRefreshSymbols(ctx context.Context, portfolioID string,
 }
 
 func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	system := client.IsSystemRequest(r)
+	userID := client.GetUserID(r.Context())
 	var req struct {
 		PortfolioID string   `json:"portfolio_id"`
 		Symbols     []string `json:"symbols"`
@@ -553,7 +582,7 @@ func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 
 	work := func(ctx context.Context) (map[string]interface{}, error) {
-		symbols, err := h.collectRefreshSymbols(ctx, req.PortfolioID, req.Symbols)
+		symbols, err := h.collectRefreshSymbols(ctx, system, userID, req.PortfolioID, req.Symbols)
 		if err != nil {
 			return nil, err
 		}
@@ -574,9 +603,9 @@ func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	symbols, err := h.collectRefreshSymbols(r.Context(), req.PortfolioID, req.Symbols)
+	symbols, err := h.collectRefreshSymbols(r.Context(), system, userID, req.PortfolioID, req.Symbols)
 	if err != nil {
-		writeErr(w, r, http.StatusInternalServerError, "%v", err)
+		writeStoreErr(w, r, err)
 		return
 	}
 
@@ -604,4 +633,14 @@ func writeJSON(w http.ResponseWriter, r *http.Request, status int, v interface{}
 
 func writeErr(w http.ResponseWriter, r *http.Request, status int, format string, args ...interface{}) {
 	httputil.WriteError(w, r, status, format, args...)
+}
+
+// writeStoreErr answers 404 for a portfolio or holding that is not the
+// caller's, 500 for anything else.
+func writeStoreErr(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, ErrNotFound) {
+		writeErr(w, r, http.StatusNotFound, "not found")
+		return
+	}
+	writeErr(w, r, http.StatusInternalServerError, "%v", err)
 }

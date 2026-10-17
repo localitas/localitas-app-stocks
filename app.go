@@ -69,22 +69,38 @@ func (a *App) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /{$}", a.handleIndex)
 	mux.HandleFunc("GET /swagger.json", HandleSwagger)
 	mux.HandleFunc("GET /help.md", handleHelpMarkdown)
-	mux.HandleFunc("GET /api/portfolios", h.handleListPortfolios)
-	mux.HandleFunc("POST /api/portfolios", h.handleCreatePortfolio)
-	mux.HandleFunc("PUT /api/portfolios/{id}", h.handleUpdatePortfolio)
-	mux.HandleFunc("DELETE /api/portfolios/{id}", h.handleDeletePortfolio)
-	mux.HandleFunc("GET /api/holdings", h.handleListHoldings)
-	mux.HandleFunc("POST /api/holdings", h.handleAddHolding)
-	mux.HandleFunc("PUT /api/holdings/{id}", h.handleUpdateHolding)
-	mux.HandleFunc("PUT /api/holdings/{id}/reorder", h.handleReorderHolding)
-	mux.HandleFunc("DELETE /api/holdings/{id}", h.handleDeleteHolding)
-	mux.HandleFunc("GET /api/quote", h.handleQuote)
-	mux.HandleFunc("GET /api/chart", h.handleChart)
-	mux.HandleFunc("GET /api/etf-holdings", h.handleETFHoldings)
-	mux.HandleFunc("GET /api/earnings", h.handleEarnings)
-	mux.HandleFunc("GET /api/financials", h.handleFinancials)
-	mux.HandleFunc("GET /api/analyst-targets", h.handleAnalystTargets)
-	mux.HandleFunc("POST /api/simulate", h.handleSimulate)
-	mux.HandleFunc("GET /api/search", h.handleSearch)
-	mux.HandleFunc("POST /api/refresh", h.handleRefresh)
+	// Portfolios belong to the user core vouches for; changing one needs
+	// write scope. Market data needs only a verified user.
+	user := func(pattern string, handler http.HandlerFunc) {
+		mux.Handle(pattern, client.AuthMiddleware(handler))
+	}
+	writer := func(pattern string, handler http.HandlerFunc) {
+		user(pattern, client.RequireScopeFunc(client.ScopeWrite, handler))
+	}
+	user("GET /api/portfolios", h.handleListPortfolios)
+	writer("POST /api/portfolios", h.handleCreatePortfolio)
+	writer("PUT /api/portfolios/{id}", h.handleUpdatePortfolio)
+	writer("DELETE /api/portfolios/{id}", h.handleDeletePortfolio)
+	user("GET /api/holdings", h.handleListHoldings)
+	writer("POST /api/holdings", h.handleAddHolding)
+	writer("PUT /api/holdings/{id}", h.handleUpdateHolding)
+	writer("PUT /api/holdings/{id}/reorder", h.handleReorderHolding)
+	writer("DELETE /api/holdings/{id}", h.handleDeleteHolding)
+	user("GET /api/quote", h.handleQuote)
+	user("GET /api/chart", h.handleChart)
+	user("GET /api/etf-holdings", h.handleETFHoldings)
+	user("GET /api/earnings", h.handleEarnings)
+	user("GET /api/financials", h.handleFinancials)
+	user("GET /api/analyst-targets", h.handleAnalystTargets)
+	user("POST /api/simulate", h.handleSimulate)
+	user("GET /api/search", h.handleSearch)
+	// Refresh serves core's cron (every portfolio) and users (their own).
+	refreshAsUser := client.AuthMiddleware(http.HandlerFunc(h.handleRefresh))
+	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
+		if client.IsSystemRequest(r) {
+			h.handleRefresh(w, r)
+			return
+		}
+		refreshAsUser.ServeHTTP(w, r)
+	})
 }

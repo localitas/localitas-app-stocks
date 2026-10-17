@@ -5,11 +5,18 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 )
 
 const DatabaseName = "stocks"
+
+// ErrNotFound is returned for a portfolio or holding that does not exist or
+// belongs to another user: the two are indistinguishable to the caller.
+var ErrNotFound = errors.New("not found")
+
+const ownedPortfolios = "SELECT id FROM portfolios WHERE user_id = ?"
 
 type Store struct {
 	db *sql.DB
@@ -78,19 +85,61 @@ func (s *Store) ListAllPortfolios(ctx context.Context) ([]*Portfolio, error) {
 	return out, nil
 }
 
-func (s *Store) UpdatePortfolio(ctx context.Context, id, name string) error {
+func requireOneRow(res sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// OwnsPortfolio reports whether userID owns portfolio id.
+func (s *Store) OwnsPortfolio(ctx context.Context, userID, id string) error {
+	var found string
+	err := s.db.QueryRowContext(ctx, "SELECT id FROM portfolios WHERE id = ? AND user_id = ?", id, userID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
+
+func (s *Store) UpdatePortfolio(ctx context.Context, userID, id, name string) error {
 	now := time.Now().UTC().Unix()
-	_, err := s.db.ExecContext(ctx, "UPDATE portfolios SET name=?, updated_at=? WHERE id=?", name, now, id)
-	return err
+	res, err := s.db.ExecContext(ctx, "UPDATE portfolios SET name=?, updated_at=? WHERE id=? AND user_id=?", name, now, id, userID)
+	return requireOneRow(res, err)
 }
 
-func (s *Store) DeletePortfolio(ctx context.Context, id string) error {
-	s.db.ExecContext(ctx, "DELETE FROM holdings WHERE portfolio_id = ?", id)
-	_, err := s.db.ExecContext(ctx, "DELETE FROM portfolios WHERE id = ?", id)
-	return err
+// DeletePortfolio removes userID's portfolio id and its holdings together.
+func (s *Store) DeletePortfolio(ctx context.Context, userID, id string) error {
+	if err := s.OwnsPortfolio(ctx, userID, id); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM holdings WHERE portfolio_id = ?", id); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM portfolios WHERE id = ? AND user_id = ?", id, userID); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
-func (s *Store) AddHolding(ctx context.Context, portfolioID, symbol string) (*Holding, error) {
+// AddHolding adds symbol to userID's portfolio.
+func (s *Store) AddHolding(ctx context.Context, userID, portfolioID, symbol string) (*Holding, error) {
+	if err := s.OwnsPortfolio(ctx, userID, portfolioID); err != nil {
+		return nil, err
+	}
 	id := newID()
 	now := time.Now().UTC().Unix()
 	sortPos := time.Now().UTC().UnixNano()
@@ -103,7 +152,15 @@ func (s *Store) AddHolding(ctx context.Context, portfolioID, symbol string) (*Ho
 	return &Holding{ID: id, PortfolioID: portfolioID, Symbol: symbol, CreatedAt: time.Unix(now, 0), UpdatedAt: time.Unix(now, 0)}, nil
 }
 
-func (s *Store) ListHoldings(ctx context.Context, portfolioID string) ([]*Holding, error) {
+// ListHoldings returns the holdings of userID's portfolio.
+func (s *Store) ListHoldings(ctx context.Context, userID, portfolioID string) ([]*Holding, error) {
+	if err := s.OwnsPortfolio(ctx, userID, portfolioID); err != nil {
+		return nil, err
+	}
+	return s.listPortfolioHoldings(ctx, portfolioID)
+}
+
+func (s *Store) listPortfolioHoldings(ctx context.Context, portfolioID string) ([]*Holding, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT id, portfolio_id, symbol, COALESCE(allocation_pct,0), COALESCE(sort_position,0), created_at, updated_at FROM holdings WHERE portfolio_id = ? ORDER BY sort_position ASC, symbol ASC", portfolioID)
 	if err != nil {
 		return nil, err
@@ -120,23 +177,23 @@ func (s *Store) ListHoldings(ctx context.Context, portfolioID string) ([]*Holdin
 		h.UpdatedAt = time.Unix(updatedAt, 0)
 		out = append(out, &h)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
-func (s *Store) UpdateSortPosition(ctx context.Context, id string, position int64) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE holdings SET sort_position=? WHERE id=?", position, id)
-	return err
+func (s *Store) UpdateSortPosition(ctx context.Context, userID, id string, position int64) error {
+	res, err := s.db.ExecContext(ctx, "UPDATE holdings SET sort_position=? WHERE id=? AND portfolio_id IN ("+ownedPortfolios+")", position, id, userID)
+	return requireOneRow(res, err)
 }
 
-func (s *Store) UpdateHolding(ctx context.Context, id string, allocationPct float64) error {
+func (s *Store) UpdateHolding(ctx context.Context, userID, id string, allocationPct float64) error {
 	now := time.Now().UTC().Unix()
-	_, err := s.db.ExecContext(ctx, "UPDATE holdings SET allocation_pct=?, updated_at=? WHERE id=?", allocationPct, now, id)
-	return err
+	res, err := s.db.ExecContext(ctx, "UPDATE holdings SET allocation_pct=?, updated_at=? WHERE id=? AND portfolio_id IN ("+ownedPortfolios+")", allocationPct, now, id, userID)
+	return requireOneRow(res, err)
 }
 
-func (s *Store) DeleteHolding(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM holdings WHERE id = ?", id)
-	return err
+func (s *Store) DeleteHolding(ctx context.Context, userID, id string) error {
+	res, err := s.db.ExecContext(ctx, "DELETE FROM holdings WHERE id = ? AND portfolio_id IN ("+ownedPortfolios+")", id, userID)
+	return requireOneRow(res, err)
 }
 
 func (s *Store) GetAllSymbols(ctx context.Context) ([]string, error) {

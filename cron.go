@@ -1,26 +1,25 @@
 package stocks
 
 import (
-	"encoding/json"
 	"net/http"
+
+	client "github.com/localitas/localitas-go"
 )
 
-func HandleCron(w http.ResponseWriter, r *http.Request) {
-	spec := map[string]interface{}{
-		"jobs": []map[string]interface{}{
-			{
-				"id":          "cron:stocks:refresh-quotes",
-				"path":        "/api/refresh",
-				"method":      "POST",
-				"schedule":    "*/5 * * * *",
-				"description": "Refreshes stock quotes for all portfolio holdings",
-				"timeout":     "60s",
-				"retry": map[string]interface{}{
-					"max_attempts": 1,
-				},
-			},
+var cronSpec = client.CronSpec{
+	Jobs: []client.CronJob{
+		{
+			ID:          "cron:stocks:refresh-quotes",
+			Path:        "/api/refresh",
+			Method:      "POST",
+			Schedule:    "*/5 * * * *",
+			Description: "Refreshes stock quotes for all portfolio holdings",
+			Timeout:     "60s",
+			Retry:       &client.CronRetry{MaxAttempts: 1},
 		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(spec)
+	},
+}
+
+func HandleCron(w http.ResponseWriter, r *http.Request) {
+	cronSpec.ServeHTTP(w, r)
 }

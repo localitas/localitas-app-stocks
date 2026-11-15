@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strings"
@@ -581,50 +582,31 @@ func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 
-	work := func(ctx context.Context) (map[string]interface{}, error) {
+	work := func(ctx context.Context) (RefreshResponse, error) {
 		symbols, err := h.collectRefreshSymbols(ctx, system, userID, req.PortfolioID, req.Symbols)
 		if err != nil {
-			return nil, err
+			return RefreshResponse{}, err
 		}
 		if len(symbols) == 0 {
-			return map[string]interface{}{"refreshed": 0}, nil
+			return RefreshResponse{}, nil
 		}
 		quotes, err := FetchQuotes(symbols)
 		if err != nil {
-			return nil, err
+			return RefreshResponse{}, fmt.Errorf("fetch quotes: %w", err)
 		}
-		return map[string]interface{}{
-			"refreshed": len(quotes),
-			"symbols":   symbols,
-		}, nil
+		return RefreshResponse{Refreshed: len(quotes), Symbols: symbols, Quotes: quotes}, nil
 	}
 
-	if h.app.client.RunAsync(w, r, work) {
+	if client.RunAsync(h.app.client, w, r, work) {
 		return
 	}
 
-	symbols, err := h.collectRefreshSymbols(r.Context(), system, userID, req.PortfolioID, req.Symbols)
+	result, err := work(r.Context())
 	if err != nil {
 		writeStoreErr(w, r, err)
 		return
 	}
-
-	if len(symbols) == 0 {
-		writeJSON(w, r, http.StatusOK, RefreshResponse{Refreshed: 0})
-		return
-	}
-
-	quotes, err := FetchQuotes(symbols)
-	if err != nil {
-		writeErr(w, r, http.StatusInternalServerError, "fetch quotes: %v", err)
-		return
-	}
-
-	writeJSON(w, r, http.StatusOK, RefreshResponse{
-		Refreshed: len(quotes),
-		Symbols:   symbols,
-		Quotes:    quotes,
-	})
+	writeJSON(w, r, http.StatusOK, result)
 }
 
 func writeJSON(w http.ResponseWriter, r *http.Request, status int, v interface{}) {

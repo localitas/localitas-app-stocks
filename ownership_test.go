@@ -125,6 +125,24 @@ func TestPortfolios_RequireAVerifiedUser(t *testing.T) {
 	}
 }
 
+// Core's cron with no holdings to refresh answers that it refreshed nothing.
+func TestRefresh_NothingToRefresh(t *testing.T) {
+	app, mux := newOwnershipApp(t)
+	if _, err := app.Store.CreatePortfolio(context.Background(), "alice", "empty"); err != nil {
+		t.Fatal(err)
+	}
+	rec := do(mux, "POST", "/api/refresh", testAPIToken, `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("system refresh: %d %s", rec.Code, rec.Body)
+	}
+	assertWireKeys(t, rec.Body.Bytes(), "refreshed")
+	var result RefreshResponse
+	strictDecode(t, rec.Body.Bytes(), &result)
+	if result.Refreshed != 0 || result.Symbols != nil || result.Quotes != nil {
+		t.Fatalf("refresh with no holdings = %+v", result)
+	}
+}
+
 // Core's cron refreshes every portfolio's symbols; a user's refresh with no
 // portfolio named covers only their own.
 func TestRefresh_SymbolsByCaller(t *testing.T) {

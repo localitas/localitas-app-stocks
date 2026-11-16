@@ -1,48 +1,71 @@
 package stocks
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
+
+	"github.com/localitas/localitas-go/httputil"
 )
 
 const yahooChartURL = "https://query1.finance.yahoo.com/v8/finance/chart"
 
-var httpClient = &http.Client{
-	Timeout: 15 * time.Second,
-	Jar:     nil,
-}
+var (
+	yahooCookieURL = "https://fc.yahoo.com"
+	yahooCrumbURL  = "https://query2.finance.yahoo.com/v1/test/getcrumb"
+)
+
+// yahoo asks Yahoo Finance, again when it fails for a moment, through the
+// SDK's pooled client, which drops an idle connection a NAT lost, with each
+// failed try traced. Each try keeps the 15 s a request had.
+var yahoo = httputil.Upstream{UserAgent: "Mozilla/5.0", AttemptTimeout: 15 * time.Second}
 
 var yahooCrumb string
 var yahooCookies []*http.Cookie
+
+// withSession is yahoo sending Yahoo's session cookies.
+func withSession() httputil.Upstream {
+	up := yahoo
+	if len(yahooCookies) > 0 {
+		pairs := make([]string, len(yahooCookies))
+		for i, c := range yahooCookies {
+			pairs[i] = (&http.Cookie{Name: c.Name, Value: c.Value}).String()
+		}
+		up.Header = http.Header{"Cookie": {strings.Join(pairs, "; ")}}
+	}
+	return up
+}
+
+// yahooRead GETs u through up and reads the answer.
+func yahooRead(up httputil.Upstream, u string) (*http.Response, []byte, error) {
+	resp, err := up.Get(context.Background(), "Yahoo Finance", u)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp, body, nil
+}
 
 func ensureYahooCrumb() error {
 	if yahooCrumb != "" {
 		return nil
 	}
-	req, _ := http.NewRequest("GET", "https://fc.yahoo.com", nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	resp, err := httpClient.Do(req)
+	resp, _, err := yahooRead(yahoo, yahooCookieURL)
 	if err != nil {
 		return err
 	}
 	yahooCookies = resp.Cookies()
-	resp.Body.Close()
 
-	req2, _ := http.NewRequest("GET", "https://query2.finance.yahoo.com/v1/test/getcrumb", nil)
-	req2.Header.Set("User-Agent", "Mozilla/5.0")
-	for _, c := range yahooCookies {
-		req2.AddCookie(c)
-	}
-	resp2, err := httpClient.Do(req2)
+	_, body, err := yahooRead(withSession(), yahooCrumbURL)
 	if err != nil {
 		return err
 	}
-	defer resp2.Body.Close()
-	body, _ := io.ReadAll(resp2.Body)
 	yahooCrumb = string(body)
 	return nil
 }
@@ -58,20 +81,10 @@ func yahooAuthGet(u string) ([]byte, error) {
 		sep = "&"
 	}
 	fullURL := u + sep + "crumb=" + url.QueryEscape(yahooCrumb)
-	req, err := http.NewRequest("GET", fullURL, nil)
+	resp, body, err := yahooRead(withSession(), fullURL)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	for _, c := range yahooCookies {
-		req.AddCookie(c)
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == 401 {
 		yahooCrumb = ""
 		return yahooAuthGet(u)
@@ -92,17 +105,10 @@ func contains(s, sub string) bool {
 }
 
 func yahooGet(u string) ([]byte, error) {
-	req, err := http.NewRequest("GET", u, nil)
+	resp, body, err := yahooRead(yahoo, u)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("yahoo %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
 	}

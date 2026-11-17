@@ -31,7 +31,7 @@ cd ~/localitas-app-stocks
 
 # Build and run locally
 make build
-./bin/stocks-server serve --listen :8000
+./bin/stocks-server serve --listen 127.0.0.1:8000
 
 # Or via launchd (macOS)
 make start
